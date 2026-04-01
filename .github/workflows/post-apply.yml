@@ -30,30 +30,16 @@ jobs:
         working-directory: environments/aws-prod
         run: |
           terraform init -input=false -no-color
-
-          # Safe output - không fail nếu state trống
           ALB=$(terraform output -raw alb_dns_name 2>/dev/null || echo "pending")
           RAW=$(terraform output -json web_instance_ips 2>/dev/null || echo "[]")
-          EC2_IP1=$(echo "$RAW" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-print(d[0] if len(d)>0 else 'pending')
-" 2>/dev/null || echo "pending")
-          EC2_IP2=$(echo "$RAW" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-print(d[1] if len(d)>1 else 'pending')
-" 2>/dev/null || echo "pending")
-
+          EC2_IP1=$(echo "$RAW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0] if len(d)>0 else 'pending')" || echo "pending")
+          EC2_IP2=$(echo "$RAW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[1] if len(d)>1 else 'pending')" || echo "pending")
           echo "alb_dns=$ALB"     >> $GITHUB_OUTPUT
           echo "ec2_ip1=$EC2_IP1" >> $GITHUB_OUTPUT
           echo "ec2_ip2=$EC2_IP2" >> $GITHUB_OUTPUT
           echo "::notice::ALB=$ALB | EC2-1=$EC2_IP1 | EC2-2=$EC2_IP2"
-
-          # Fail nếu không có IP thật
-          if [[ "$ALB" == "pending" ]]; then
-            echo "⚠️ No state yet - trigger HCP Apply first"
-            echo "Go to: https://app.terraform.io/app/hybrid-cloud-doanthesis/workspaces/ws-aws-prod"
+          if [ "$ALB" = "pending" ]; then
+            echo "⚠️ No HCP state yet - run Apply on HCP first!"
             exit 1
           fi
 
@@ -72,16 +58,13 @@ print(d[1] if len(d)>1 else 'pending')
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Ansible + collections
+      - name: Install Ansible
         run: |
           pip3 install --user ansible
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          ansible-galaxy collection install \
-            community.general \
-            community.mysql \
-            ansible.posix
+          ansible-galaxy collection install community.general community.mysql ansible.posix
 
-      - name: Setup SSH key
+      - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/server_key
@@ -116,14 +99,13 @@ print(d[1] if len(d)>1 else 'pending')
         id: health
         run: |
           sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 10 \
-            "http://${{ needs.get-outputs.outputs.alb_dns }}/health" || echo "000")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 10 "http://${{ needs.get-outputs.outputs.alb_dns }}/health" || echo "000")
           if [ "$STATUS" = "200" ]; then
             echo "health_ok=true" >> $GITHUB_OUTPUT
-            echo "✅ Health PASSED: $STATUS"
+            echo "✅ Health PASSED"
           else
             echo "health_ok=false" >> $GITHUB_OUTPUT
-            echo "❌ Health FAILED: $STATUS"
+            echo "❌ Health FAILED: HTTP $STATUS"
             exit 1
           fi
 
@@ -132,7 +114,7 @@ print(d[1] if len(d)>1 else 'pending')
     if: needs.verify.outputs.health_ok == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Slack LIVE
+      - name: Slack SUCCESS
         uses: slackapi/slack-github-action@v1.26.0
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CTO_WEBHOOK }}
@@ -141,25 +123,16 @@ print(d[1] if len(d)>1 else 'pending')
           payload: |
             {
               "blocks": [
-                {
-                  "type": "header",
-                  "text": { "type": "plain_text", "text": "✅ PA3 SUCCESS - SYSTEM LIVE!" }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    { "type": "mrkdwn", "text": "*ALB:* http://${{ needs.get-outputs.outputs.alb_dns }}" },
-                    { "type": "mrkdwn", "text": "*DB:*  ${{ needs.get-outputs.outputs.db_ip }}" },
-                    { "type": "mrkdwn", "text": "*EC2-1:* ${{ needs.get-outputs.outputs.ec2_ip1 }}" },
-                    { "type": "mrkdwn", "text": "*EC2-2:* ${{ needs.get-outputs.outputs.ec2_ip2 }}" }
-                  ]
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    { "type": "mrkdwn", "text": "Run #${{ github.run_number }} | ${{ github.sha }}" }
-                  ]
-                }
+                {"type": "header", "text": {"type": "plain_text", "text": "✅ PA3 SUCCESS - SYSTEM LIVE!"}},
+                {"type": "section", "fields": [
+                  {"type": "mrkdwn", "text": "*ALB:* http://${{ needs.get-outputs.outputs.alb_dns }}"},
+                  {"type": "mrkdwn", "text": "*DB:* ${{ needs.get-outputs.outputs.db_ip }}"},
+                  {"type": "mrkdwn", "text": "*EC2-1:* ${{ needs.get-outputs.outputs.ec2_ip1 }}"},
+                  {"type": "mrkdwn", "text": "*EC2-2:* ${{ needs.get-outputs.outputs.ec2_ip2 }}"}
+                ]},
+                {"type": "context", "elements": [
+                  {"type": "mrkdwn", "text": "Run #${{ github.run_number }} | ${{ github.sha }}"}
+                ]}
               ]
             }
 
