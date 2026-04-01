@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -e
-
 EC2_IP1="$1"
 EC2_IP2="$2"
 DB_IP="$3"
@@ -12,10 +11,10 @@ fi
 
 INVENTORY="ansible/inventory/hosts.yml"
 cp "$INVENTORY" "$INVENTORY.bak"
-
-# Replace placeholders
 sed -i "s/PLACEHOLDER_EC2_IP1/$EC2_IP1/g" "$INVENTORY"
 sed -i "s/PLACEHOLDER_EC2_IP2/$EC2_IP2/g" "$INVENTORY"
-sed -i "s/PLACEHOLDER_DB_IP/$DB_IP/g" "$INVENTORY"
 
-echo "✅ Inventory updated: $EC2_IP1, $EC2_IP2, $DB_IP"
+echo "✅ Inventory updated:"
+echo "   EC2-1: $EC2_IP1"
+echo "   EC2-2: $EC2_IP2"
+echo "   DB:    $DB_IP"
