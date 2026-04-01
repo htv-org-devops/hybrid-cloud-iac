@@ -1,0 +1,199 @@
+name: "🚨 Notify CTO — Full Change Report"
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Phân tích toàn bộ thay đổi ──────────────────────
+      - name: Analyze ALL changes in detail
+        id: analysis
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+
+          # === 1. Phân loại files theo nhóm ===
+          TF_FILES=$(git diff --name-only $BASE..HEAD -- '*.tf' | sort)
+          ANSIBLE_FILES=$(git diff --name-only $BASE..HEAD -- 'ansible/**' | sort)
+          GHA_FILES=$(git diff --name-only $BASE..HEAD -- '.github/**' | sort)
+          APP_FILES=$(git diff --name-only $BASE..HEAD -- 'webapp/**' 'scripts/**' | sort)
+          OTHER_FILES=$(git diff --name-only $BASE..HEAD | grep -v -E '\.(tf)$'             | grep -v '^ansible/' | grep -v '^\.github/'             | grep -v '^webapp/' | grep -v '^scripts/' | sort)
+
+          # === 2. Diff stats tổng quan ===
+          TOTAL_STATS=$(git diff --stat $BASE..HEAD | tail -1)
+          TOTAL_FILES=$(git diff --name-only $BASE..HEAD | wc -l)
+
+          # === 3. Mô tả thay đổi từng nhóm (dạng ngắn gọn) ===
+          # Terraform: list resources thay đổi (nếu có)
+          TF_DETAIL=""
+          if [ -n "$TF_FILES" ]; then
+            TF_DETAIL=$(git diff $BASE..HEAD -- '*.tf'               | grep -E '^\+.*resource |^\+.*module |^\-.*resource |^\-.*module '               | head -15 || echo "(xem diff chi tiết trong PR)")
+          fi
+
+          # === 4. Ghi outputs ===
+          {
+            echo "tf_files<> "$GITHUB_OUTPUT"
+
+      # ── Post comment CHI TIẾT lên PR ─────────────────────
+      - name: Post detailed PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tfFiles = `${{ steps.analysis.outputs.tf_files }}`.trim();
+            const ansibleFiles = `${{ steps.analysis.outputs.ansible_files }}`.trim();
+            const ghaFiles = `${{ steps.analysis.outputs.gha_files }}`.trim();
+            const appFiles = `${{ steps.analysis.outputs.app_files }}`.trim();
+            const otherFiles = `${{ steps.analysis.outputs.other_files }}`.trim();
+            const tfDetail = `${{ steps.analysis.outputs.tf_detail }}`.trim();
+            const stats = `${{ steps.analysis.outputs.total_stats }}`;
+            const totalFiles = `${{ steps.analysis.outputs.total_files }}`;
+
+            const sections = [];
+
+            if (tfFiles !== 'Không có') {
+              sections.push(`### Terraform (.tf)
+\`\`\`
+${tfFiles}
+\`\`\``);
+              if (tfDetail !== 'Không có resource thay đổi') {
+                sections.push(`**Resources thay đổi:**
+\`\`\`hcl
+${tfDetail}
+\`\`\``);
+              }
+            }
+            if (ansibleFiles !== 'Không có')
+              sections.push(`### Ansible
+\`\`\`
+${ansibleFiles}
+\`\`\``);
+            if (ghaFiles !== 'Không có')
+              sections.push(`### GitHub Actions
+\`\`\`
+${ghaFiles}
+\`\`\``);
+            if (appFiles !== 'Không có')
+              sections.push(`### Application / Scripts
+\`\`\`
+${appFiles}
+\`\`\``);
+            if (otherFiles !== 'Không có')
+              sections.push(`### Other
+\`\`\`
+${otherFiles}
+\`\`\``);
+
+            const body = [
+              '## 🚨 Infrastructure Change Report',
+              '',
+              `**PR:** #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}`,
+              `**Author:** @${{ github.actor }}`,
+              `**Total:** ${totalFiles} files | ${stats}`,
+              '',
+              '---',
+              '',
+              sections.join('
+
+'),
+              '',
+              '---',
+              '',
+              '> **CTO Action Required:**',
+              '> 1. Review danh sách files ở trên',
+              '> 2. Tab **"Files changed"** để xem diff chi tiết',
+              '> 3. **Approve → Merge** để trigger PA3 auto-deploy',
+              '> ',
+              '> *Sau merge → HCP Terraform Auto Apply → Auto Gate → Ansible Deploy → Notify*'
+            ].join('
+');
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      # ── Slack: Gửi MÔ TẢ TOÀN BỘ thay đổi ──────────────
+      - name: Slack — Full change report to CTO
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CTO_WEBHOOK }}
+        run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="https://github.com/${{ github.repository }}/pull/${PR_NUM}"
+          AUTHOR="${{ github.actor }}"
+          TOTAL="${{ steps.analysis.outputs.total_files }}"
+          STATS="${{ steps.analysis.outputs.total_stats }}"
+
+          # Phân loại files
+          TF="${{ steps.analysis.outputs.tf_files }}"
+          ANSIBLE="${{ steps.analysis.outputs.ansible_files }}"
+          GHA="${{ steps.analysis.outputs.gha_files }}"
+          APP="${{ steps.analysis.outputs.app_files }}"
+
+          # Build Slack message (Block Kit format cho đẹp)
+          cat > /tmp/slack_payload.json << SLACKEOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "🚨 PR #${PR_NUM}: ${PR_TITLE}"}
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {"type": "mrkdwn", "text": "*Author:*
+${AUTHOR}"},
+                  {"type": "mrkdwn", "text": "*Files:*
+${TOTAL} files changed"},
+                  {"type": "mrkdwn", "text": "*Stats:*
+${STATS}"}
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*📂 Terraform:*
+\`\`\`${TF}\`\`\`
+*🛠 Ansible:*
+\`\`\`${ANSIBLE}\`\`\`
+*⚡ GHA Workflows:*
+\`\`\`${GHA}\`\`\`
+*💻 App/Scripts:*
+\`\`\`${APP}\`\`\`"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "✅ *Action:* Review and Approve PR to trigger PA3 auto-deploy"
+                },
+                "accessory": {
+                  "type": "button",
+                  "text": {"type": "plain_text", "text": "👉 Open PR"},
+                  "url": "${PR_URL}",
+                  "style": "primary"
+                }
+              }
+            ]
+          }
+          SLACKEOF
+
+          curl -X POST -H 'Content-type: application/json'             -d @/tmp/slack_payload.json   

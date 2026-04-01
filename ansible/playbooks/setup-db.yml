@@ -1,0 +1,42 @@
+---
+- name: Setup MariaDB on DB Server
+  hosts: db_servers
+  become: yes
+  vars:
+    db_name: appdb
+    db_user: appuser
+    db_password: "{{ vault_db_password }}"
+  tasks:
+    - name: Install MariaDB
+      apt:
+        name: [mariadb-server, python3-pymysql]
+        state: present
+        update_cache: yes
+
+    - name: Start and enable MariaDB
+      systemd:
+        name: mariadb
+        enabled: yes
+        state: started
+
+    - name: Create database
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create user (allow from WireGuard subnet)
+      community.mysql.mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        host: "10.8.0.%"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Allow MySQL from WireGuard subnet
+      community.general.ufw:
+        rule: allow
+        src: '10.8.0.0/24'
+        port: '3306'
+        proto: tcp
