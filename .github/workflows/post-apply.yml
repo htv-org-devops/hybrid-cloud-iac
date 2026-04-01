@@ -9,36 +9,31 @@ env:
   TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
 
 jobs:
-  hcp-apply:
+  wait-for-hcp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_wrapper: false
-      - name: Terraform Apply AWS
-        working-directory: environments/aws-prod
+      - name: Wait for HCP Terraform Apply
         run: |
-          terraform init -input=false -no-color
-          terraform apply -auto-approve -input=false -no-color
+          echo "Waiting 300s for HCP to finish apply..."
+          sleep 300
 
   get-outputs:
-    needs: hcp-apply
+    needs: wait-for-hcp
     runs-on: ubuntu-latest
     outputs:
       alb_dns: ${{ steps.out-aws.outputs.alb_dns }}
       ec2_ip1: ${{ steps.out-aws.outputs.ec2_ip1 }}
       ec2_ip2: ${{ steps.out-aws.outputs.ec2_ip2 }}
-      db_ip: ${{ steps.out-prx.outputs.db_ip }}
+      db_ip:   ${{ steps.out-prx.outputs.db_ip }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
           terraform_wrapper: false
+
       - name: Get AWS outputs
         id: out-aws
         working-directory: environments/aws-prod
@@ -51,6 +46,8 @@ jobs:
           echo "alb_dns=$ALB" >> $GITHUB_OUTPUT
           echo "ec2_ip1=$EC2_IP1" >> $GITHUB_OUTPUT
           echo "ec2_ip2=$EC2_IP2" >> $GITHUB_OUTPUT
+          echo "ALB=$ALB EC2-1=$EC2_IP1 EC2-2=$EC2_IP2"
+
       - name: Get Proxmox outputs
         id: out-prx
         working-directory: environments/proxmox-prod
@@ -65,11 +62,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - name: Install Ansible
         run: |
           pip3 install --user ansible
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           ansible-galaxy collection install community.general community.mysql ansible.posix
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -78,10 +77,12 @@ jobs:
           ssh-keyscan -H ${{ needs.get-outputs.outputs.db_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
           ssh-keyscan -H ${{ needs.get-outputs.outputs.ec2_ip1 }} >> ~/.ssh/known_hosts 2>/dev/null || true
           ssh-keyscan -H ${{ needs.get-outputs.outputs.ec2_ip2 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
       - name: Update inventory
         run: |
           chmod +x scripts/update-inventory.sh
           ./scripts/update-inventory.sh "${{ needs.get-outputs.outputs.ec2_ip1 }}" "${{ needs.get-outputs.outputs.ec2_ip2 }}" "${{ needs.get-outputs.outputs.db_ip }}"
+
       - name: Run Ansible WireGuard
         run: |
           ansible-playbook ansible/playbooks/setup-wireguard.yml -i ansible/inventory/hosts.yml --private-key ~/.ssh/server_key
