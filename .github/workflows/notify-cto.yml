@@ -1,0 +1,46 @@
+name: Notify CTO on PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CTO_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": { "type": "plain_text", "text": "🚨 New PR - CTO Review Required" }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Repo:* ${{ github.repository }}" },
+                    { "type": "mrkdwn", "text": "*PR #:* ${{ github.event.number }}" },
+                    { "type": "mrkdwn", "text": "*Author:* ${{ github.actor }}" },
+                    { "type": "mrkdwn", "text": "*Branch:* ${{ github.head_ref }}" }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": "*Title:* ${{ github.event.pull_request.title }}" },
+                  "accessory": {
+                    "type": "button",
+                    "text": { "type": "plain_text", "text": "👀 Review PR" },
+                    "url": "${{ github.event.pull_request.html_url }}",
+                    "style": "primary"
+                  }
+                }
+              ]
+            }

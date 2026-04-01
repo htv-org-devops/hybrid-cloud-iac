@@ -1,0 +1,76 @@
+---
+- name: Setup WireGuard on DB Server
+  hosts: db_servers
+  become: yes
+  tasks:
+    - name: Install WireGuard
+      apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    - name: Generate WireGuard keys
+      shell: |
+        wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
+        chmod 600 /etc/wireguard/private.key
+      args:
+        creates: /etc/wireguard/private.key
+
+    - name: Read DB public key
+      slurp:
+        src: /etc/wireguard/public.key
+      register: db_wg_pubkey
+
+    - name: Deploy wg0 config
+      template:
+        src: templates/wg0-db.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        mode: "0600"
+
+    - name: Enable WireGuard
+      systemd:
+        name: wg-quick@wg0
+        enabled: yes
+        state: started
+
+    - name: Allow WireGuard UFW
+      community.general.ufw:
+        rule: allow
+        port: "51820"
+        proto: udp
+
+- name: Setup WireGuard on EC2
+  hosts: web_servers
+  become: yes
+  tasks:
+    - name: Install WireGuard
+      apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    - name: Generate WireGuard keys
+      shell: |
+        wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
+        chmod 600 /etc/wireguard/private.key
+      args:
+        creates: /etc/wireguard/private.key
+
+    - name: Deploy wg0 config
+      template:
+        src: templates/wg0-ec2.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        mode: "0600"
+
+    - name: Enable WireGuard
+      systemd:
+        name: wg-quick@wg0
+        enabled: yes
+        state: started
+
+    - name: Verify tunnel
+      command: ping -c 3 10.8.0.2
+      register: ping_result
+      retries: 3
+      delay: 5
+      until: ping_result.rc == 0

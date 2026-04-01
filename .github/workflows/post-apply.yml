@@ -1,0 +1,157 @@
+name: PA3 Post-Apply Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+
+jobs:
+  get-outputs:
+    runs-on: ubuntu-latest
+    outputs:
+      alb_dns: ${{ steps.out-aws.outputs.alb_dns }}
+      ec2_ip1: ${{ steps.out-aws.outputs.ec2_ip1 }}
+      ec2_ip2: ${{ steps.out-aws.outputs.ec2_ip2 }}
+      db_ip:   ${{ steps.out-prx.outputs.db_ip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_wrapper: false
+
+      - name: Get AWS outputs
+        id: out-aws
+        working-directory: environments/aws-prod
+        run: |
+          terraform init -input=false -no-color
+          ALB=$(terraform output -raw alb_dns_name)
+          EC2_IP1=$(terraform output -json web_instance_ips | python3 -c "import sys,json;print(json.load(sys.stdin)[0])")
+          EC2_IP2=$(terraform output -json web_instance_ips | python3 -c "import sys,json;print(json.load(sys.stdin)[1])")
+          echo "alb_dns=$ALB"     >> $GITHUB_OUTPUT
+          echo "ec2_ip1=$EC2_IP1" >> $GITHUB_OUTPUT
+          echo "ec2_ip2=$EC2_IP2" >> $GITHUB_OUTPUT
+
+      - name: Get Proxmox outputs
+        id: out-prx
+        working-directory: environments/proxmox-prod
+        run: |
+          terraform init -input=false -no-color
+          DB_IP=$(terraform output -raw db_vm_ip)
+          echo "db_ip=$DB_IP" >> $GITHUB_OUTPUT
+
+  deploy-ansible:
+    needs: get-outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible + collections
+        run: |
+          pip3 install --user ansible
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ansible-galaxy collection install community.general community.mysql ansible.posix
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/server_key
+          chmod 600 ~/.ssh/server_key
+          ssh-keyscan -H ${{ needs.get-outputs.outputs.db_ip }}   >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H ${{ needs.get-outputs.outputs.ec2_ip1 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H ${{ needs.get-outputs.outputs.ec2_ip2 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Update inventory
+        run: |
+          chmod +x scripts/update-inventory.sh
+          ./scripts/update-inventory.sh \
+            "${{ needs.get-outputs.outputs.ec2_ip1 }}" \
+            "${{ needs.get-outputs.outputs.ec2_ip2 }}" \
+            "${{ needs.get-outputs.outputs.db_ip }}"
+
+      - name: Run Ansible WireGuard
+        run: |
+          ansible-playbook ansible/playbooks/setup-wireguard.yml \
+            -i ansible/inventory/hosts.yml \
+            --private-key ~/.ssh/server_key
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+
+  verify:
+    needs: [get-outputs, deploy-ansible]
+    runs-on: ubuntu-latest
+    outputs:
+      health_ok: ${{ steps.health.outputs.health_ok }}
+    steps:
+      - name: Health check ALB
+        id: health
+        run: |
+          sleep 30
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 10 \
+            "http://${{ needs.get-outputs.outputs.alb_dns }}/health" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "health_ok=true" >> $GITHUB_OUTPUT
+            echo "✅ Health check PASSED"
+          else
+            echo "health_ok=false" >> $GITHUB_OUTPUT
+            echo "❌ Health check FAILED: HTTP $STATUS"
+            exit 1
+          fi
+
+  notify-success:
+    needs: [get-outputs, verify]
+    if: needs.verify.outputs.health_ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack LIVE notification
+        uses: slackapi/slack-github-action@v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CTO_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": { "type": "plain_text", "text": "✅ PA3 SUCCESS - SYSTEM LIVE!" }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*ALB:* http://${{ needs.get-outputs.outputs.alb_dns }}" },
+                    { "type": "mrkdwn", "text": "*DB:* ${{ needs.get-outputs.outputs.db_ip }}" },
+                    { "type": "mrkdwn", "text": "*EC2-1:* ${{ needs.get-outputs.outputs.ec2_ip1 }}" },
+                    { "type": "mrkdwn", "text": "*EC2-2:* ${{ needs.get-outputs.outputs.ec2_ip2 }}" }
+                  ]
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    { "type": "mrkdwn", "text": "Run #${{ github.run_number }} | ${{ github.sha }}" }
+                  ]
+                }
+              ]
+            }
+
+  notify-failure:
+    needs: [verify]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack FAIL notification
+        uses: slackapi/slack-github-action@v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CTO_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "text": "❌ PA3 FAILED! Run #${{ github.run_number }} - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }

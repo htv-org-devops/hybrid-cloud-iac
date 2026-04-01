@@ -1,0 +1,6 @@
+* @htv-org-devops/cto-approvers
+modules/ @htv-org-devops/cto-approvers
+environments/ @htv-org-devops/cto-approvers
+*.tf @htv-org-devops/cto-approvers
+ansible/ @htv-org-devops/cto-approvers
+.github/workflows/ @htv-org-devops/cto-approvers

@@ -1,0 +1,10 @@
+[Interface]
+Address = 10.8.0.1/24
+ListenPort = 51820
+PrivateKey = {{ lookup('file', '/etc/wireguard/private.key') }}
+
+[Peer]
+PublicKey = {{ db_wg_pubkey.content | b64decode | trim }}
+AllowedIPs = 10.8.0.2/32
+Endpoint = 172.199.10.180:51820
+PersistentKeepalive = 25

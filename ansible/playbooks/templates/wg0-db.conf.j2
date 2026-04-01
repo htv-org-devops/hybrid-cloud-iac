@@ -1,0 +1,10 @@
+[Interface]
+Address = 10.8.0.2/24
+ListenPort = 51820
+PrivateKey = {{ lookup('file', '/etc/wireguard/private.key') }}
+
+[Peer]
+PublicKey = {{ ec2_wg_pubkey }}
+AllowedIPs = 10.8.0.1/32
+Endpoint = {{ hostvars[groups['web_servers'][0]]['ansible_host'] }}:51820
+PersistentKeepalive = 25
