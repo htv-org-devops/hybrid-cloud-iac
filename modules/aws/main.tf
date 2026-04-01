@@ -7,67 +7,47 @@ terraform {
   }
 }
 
-# Data source cho AMI mới nhất
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
-
+  owners      = ["099720109477"]
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-noble-24.04-amd64-server-*"]
   }
-
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
 }
 
-# VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
-
-  tags = {
-    Name = "hybrid-vpc-${var.environment}"
-  }
+  tags = { Name = "hybrid-vpc-${var.environment}" }
 }
 
-# Internet Gateway
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
-
-  tags = {
-    Name = "hybrid-igw"
-  }
+  tags   = { Name = "hybrid-igw" }
 }
 
-# Public Subnets
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnets[count.index]
   availability_zone       = var.azs[count.index]
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "hybrid-public-${var.azs[count.index]}"
-  }
+  tags = { Name = "hybrid-public-${var.azs[count.index]}" }
 }
 
-# Route Table
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
-
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.gw.id
   }
-
-  tags = {
-    Name = "hybrid-public-rt"
-  }
+  tags = { Name = "hybrid-public-rt" }
 }
 
 resource "aws_route_table_association" "public" {
@@ -76,7 +56,6 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Security Group
 resource "aws_security_group" "web" {
   name_prefix = "hybrid-web-"
   vpc_id      = aws_vpc.main.id
@@ -116,17 +95,13 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "hybrid-web-sg"
-  }
+  tags = { Name = "hybrid-web-sg" }
 }
 
-# EC2 Instances
 resource "aws_instance" "web" {
-  count         = 2
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = var.instance_type
-
+  count                  = 2
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.web.id]
   subnet_id              = aws_subnet.public[count.index].id
@@ -136,12 +111,12 @@ resource "aws_instance" "web" {
     volume_type = "gp3"
   }
 
-  user_data = <<-EOF
+  user_data = <<-USERDATA
     #!/bin/bash
     apt-get update -y
     apt-get install -y python3 python3-pip wireguard
     pip3 install flask pymysql cryptography
-  EOF
+  USERDATA
 
   tags = {
     Name        = "hybrid-web-${count.index + 1}"
@@ -150,17 +125,13 @@ resource "aws_instance" "web" {
   }
 }
 
-# ALB
 resource "aws_lb" "web" {
   name               = "hybrid-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.web.id]
   subnets            = aws_subnet.public[*].id
-
-  tags = {
-    Name = "hybrid-alb"
-  }
+  tags               = { Name = "hybrid-alb" }
 }
 
 resource "aws_lb_target_group" "web" {
@@ -190,7 +161,6 @@ resource "aws_lb_listener" "web" {
   load_balancer_arn = aws_lb.web.arn
   port              = "80"
   protocol          = "HTTP"
-
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.web.arn
