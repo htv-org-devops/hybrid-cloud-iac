@@ -59,11 +59,42 @@ resource "aws_route_table_association" "public" {
 resource "aws_security_group" "web" {
   name_prefix = "hybrid-web-"
   vpc_id      = aws_vpc.main.id
-  ingress { from_port = 22;    to_port = 22;    protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
-  ingress { from_port = 80;    to_port = 80;    protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
-  ingress { from_port = 5000;  to_port = 5000;  protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
-  ingress { from_port = 51820; to_port = 51820; protocol = "udp"; cidr_blocks = ["0.0.0.0/0"] }
-  egress  { from_port = 0;     to_port = 0;     protocol = "-1";  cidr_blocks = ["0.0.0.0/0"] }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 51820
+    to_port     = 51820
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   tags = { Name = "hybrid-web-sg" }
 }
 
@@ -74,16 +105,19 @@ resource "aws_instance" "web" {
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.web.id]
   subnet_id              = aws_subnet.public[count.index].id
+
   root_block_device {
     volume_size = 20
     volume_type = "gp3"
   }
+
   user_data = <<-USERDATA
     #!/bin/bash
     apt-get update -y
     apt-get install -y python3 python3-pip wireguard
     pip3 install flask pymysql cryptography
   USERDATA
+
   tags = {
     Name        = "hybrid-web-${count.index + 1}"
     Environment = var.environment
@@ -105,6 +139,7 @@ resource "aws_lb_target_group" "web" {
   port     = 5000
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
+
   health_check {
     path                = "/health"
     interval            = 30
