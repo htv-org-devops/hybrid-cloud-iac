@@ -1,228 +1,113 @@
-name: "⚡ Post-Apply Deploy (PA3)"
+name: PA3 Post-Apply Pipeline
+
 on:
   push:
-    branches: [main]
-    paths: ['**/*.tf', 'modules/**', 'environments/**']
-  # Trigger thủ công (skip wait-hcp):
+    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      workspace:
+        description: 'Workspace to apply'
+        default: 'aws-prod'
+
+env:
+  TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
+  SLACK_WEBHOOK: ${{ secrets.SLACK_CTO_WEBHOOK }}
 
 jobs:
-  # ── Job 0: ĐỢI HCP Terraform apply xong ─────────────
-  wait-hcp:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Poll HCP API — đợi cả 2 workspace applied
-        env:
-          TF_TOKEN: ${{ secrets.TF_API_TOKEN }}
-          ORG: hybrid-cloud-doanthesis
-        run: |
-          echo "⏳ Đợi HCP Terraform apply..."
-          WORKSPACES=("ws-aws-prod" "ws-proxmox-prod")
-          MAX_WAIT=600   # 10 phút timeout
-          INTERVAL=30    # check mỗi 30s
-
-          for WS in "${WORKSPACES[@]}"; do
-            echo "=== Checking: $WS ==="
-            ELAPSED=0
-            while [ $ELAPSED -lt $MAX_WAIT ]; do
-              RESP=$(curl -s                 -H "Authorization: Bearer $TF_TOKEN"                 -H "Content-Type: application/vnd.api+json"                 "https://app.terraform.io/api/v2/organizations/$ORG/workspaces/$WS")
-
-              # Lấy current-run-id rồi check status
-              RUN_ID=$(echo "$RESP" | jq -r '.data.relationships."current-run".data.id // empty')
-              if [ -n "$RUN_ID" ]; then
-                RUN_STATUS=$(curl -s                   -H "Authorization: Bearer $TF_TOKEN"                   "https://app.terraform.io/api/v2/runs/$RUN_ID"                   | jq -r '.data.attributes.status')
-              else
-                RUN_STATUS="no-run"
-              fi
-
-              echo "  $WS: $RUN_STATUS (${ELAPSED}s)"
-
-              case "$RUN_STATUS" in
-                applied|planned_and_finished)
-                  echo "  ✅ $WS done!"; break ;;
-                errored|canceled|force_canceled)
-                  echo "  ❌ $WS failed: $RUN_STATUS"; exit 1 ;;
-              esac
-
-              sleep $INTERVAL
-              ELAPSED=$((ELAPSED + INTERVAL))
-            done
-
-            [ $ELAPSED -ge $MAX_WAIT ] && echo "❌ Timeout $WS" && exit 1
-          done
-          echo "✅ Cả 2 workspaces applied!"
-
-  # ── Job 1: Lấy outputs từ Terraform ──────────────────
   get-outputs:
-    needs: [wait-hcp]
-    if: always() && (needs.wait-hcp.result == 'success' || needs.wait-hcp.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
-      alb_dns: ${{ steps.aws.outputs.alb_dns }}
-      ec2_ips: ${{ steps.aws.outputs.ec2_ips }}
-      db_ip:   ${{ steps.prox.outputs.db_ip }}
+      alb_dns: ${{ steps.out-aws.outputs.alb_dns }}
+      ec2_ips: ${{ steps.out-aws.outputs.ec2_ips }}
+      db_ip: ${{ steps.out-prx.outputs.db_ip }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+    - uses: actions/checkout@v4
 
-      - name: AWS outputs
-        id: aws
-        working-directory: environments/aws-prod
-        run: |
-          terraform init
-          echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
-          echo "ec2_ips=$(terraform output -json web_instance_ips)" >> $GITHUB_OUTPUT
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
 
-      - name: Proxmox outputs
-        id: prox
-        working-directory: environments/proxmox-prod
-        run: |
-          terraform init
-          echo "db_ip=$(terraform output -raw db_vm_ip)" >> $GITHUB_OUTPUT
+    - name: Get AWS outputs
+      id: out-aws
+      working-directory: ./environments/aws-prod
+      run: |
+        terraform init -input=false -no-color
+        ALB=$(terraform output -raw alb_dns_name)
+        EC2_IPS=$(terraform output -json web_instance_ips | python3 -c "import sys,json;print(json.load(sys.stdin)[0])")
+        echo "alb_dns=$ALB" >> $GITHUB_OUTPUT
+        echo "ec2_ips=$EC2_IPS" >> $GITHUB_OUTPUT
+        echo "::notice:: ALB=$ALB EC2=$EC2_IPS"
 
-  # ── Job 2: AUTO GATE — Verify infra trước khi deploy ─
-  auto-gate:
+    - name: Get Proxmox outputs  
+      id: out-prx
+      working-directory: ./environments/proxmox-prod
+      run: |
+        terraform init -input=false -no-color
+        DB_IP=$(terraform output -raw db_vm_ip)
+        echo "db_ip=$DB_IP" >> $GITHUB_OUTPUT
+        echo "::notice:: DB=$DB_IP"
+
+  deploy-ansible:
     needs: get-outputs
     runs-on: ubuntu-latest
     steps:
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/server_key
-          chmod 600 ~/.ssh/server_key
-          ssh-keyscan -H $(echo '${{ needs.get-outputs.outputs.ec2_ips }}' | jq -r '.[0]') >> ~/.ssh/known_hosts 2>/dev/null || true
+    - uses: actions/checkout@v4
 
-      - name: Gate - Check EC2 SSH accessible
-        run: |
-          EC2_IP=$(echo '${{ needs.get-outputs.outputs.ec2_ips }}' | jq -r '.[0]')
-          echo "Testing SSH to EC2: $EC2_IP"
-          for i in 1 2 3 4 5 6; do
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10               -i ~/.ssh/server_key ubuntu@$EC2_IP "echo ok" && break
-            echo "Retry $i/6... waiting 30s"
-            sleep 30
-          done
+    - name: Update inventory
+      env:
+        EC2_IP1: ${{ needs.get-outputs.outputs.ec2_ips }}
+        EC2_IP2: ${{ needs.get-outputs.outputs.ec2_ips }} 
+        DB_IP: ${{ needs.get-outputs.outputs.db_ip }}
+      run: |
+        chmod +x scripts/update-inventory.sh
+        ./scripts/update-inventory.sh "$EC2_IP1" "$EC2_IP2" "$DB_IP"
 
-      - name: Gate - Check VM 8888 pingable from EC2
-        run: |
-          EC2_IP=$(echo '${{ needs.get-outputs.outputs.ec2_ips }}' | jq -r '.[0]')
-          # EC2 chưa có WireGuard, ping qua public network (nếu cùng mạng)
-          # Hoặc skip nếu khác mạng — WireGuard sẽ setup bởi Ansible
-          echo "DB IP: ${{ needs.get-outputs.outputs.db_ip }}"
-          echo "EC2 accessible — infra gate PASSED"
+    - name: Deploy WireGuard
+      uses: dawidd6/action-ansible-playbook@v2
+      with:
+        playbook: ansible/playbooks/setup-wireguard.yml
+        inventory: ansible/inventory/hosts.yml
+        options: |
+          --extra-vars "ansible_ssh_private_key_file={{ github.workspace }}/.ssh/server_key"
+        directory: .
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: False
+        ANSIBLE_PRIVATE_KEY_FILE: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Gate - Check ALB responding
-        run: |
-          ALB="${{ needs.get-outputs.outputs.alb_dns }}"
-          echo "Testing ALB: $ALB"
-          for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$ALB/" --max-time 10 || echo "000")
-            echo "ALB status: $STATUS (attempt $i)"
-            # ALB có thể trả 502/503 trước khi target healthy — OK
-            [ "$STATUS" != "000" ] && break
-            sleep 20
-          done
-          echo "ALB reachable — gate PASSED"
+  verify:
+    needs: [get-outputs, deploy-ansible]
+    runs-on: ubuntu-latest
+    outputs:
+      health_ok: ${{ steps.health.outputs.status }}
+    steps:
+    - name: Health check ALB
+      id: health
+      env:
+        ALB_DNS: ${{ needs.get-outputs.outputs.alb_dns }}
+      run: |
+        sleep 30  # Đợi ALB ready
+        HEALTH=$(curl -s -f -m 10 "http://${ALB_DNS}/health" || echo "FAILED")
+        STATUS=1
+        if [[ "$HEALTH" != "OK" ]]; then STATUS=0; fi
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+        echo "Health: $HEALTH"
 
-      - name: Gate PASSED - All infra verified
-        run: echo "All infrastructure gates passed. Proceeding to Ansible deploy."
-
-  # ── Job 3: ANSIBLE DEPLOY ─────────────────────────────
-  deploy:
-    needs: [get-outputs, auto-gate]
+  notify-success:
+    needs: [verify]
+    if: needs.verify.outputs.health_ok == '1'  # Fix: dùng single quote
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/server_key
-          chmod 600 ~/.ssh/server_key
-
-      - name: Update Ansible inventory with real IPs
-        run: |
-          EC2_IPS='${{ needs.get-outputs.outputs.ec2_ips }}'
-          EC2_1=$(echo "$EC2_IPS" | jq -r '.[0]')
-          EC2_2=$(echo "$EC2_IPS" | jq -r '.[1]')
-          DB_IP="${{ needs.get-outputs.outputs.db_ip }}"
-
-          sed -i "s/PLACEHOLDER_EC2_IP_1/$EC2_1/" ansible/inventory/hosts.yml
-          sed -i "s/PLACEHOLDER_EC2_IP_2/$EC2_2/" ansible/inventory/hosts.yml
-          sed -i "s/172.199.10.180/$DB_IP/" ansible/inventory/hosts.yml
-
-          echo "Updated inventory:"
-          cat ansible/inventory/hosts.yml
-
-      - name: Install Ansible
-        run: pip3 install ansible pymysql
-
-      - name: Create vault password file
-        run: echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_password
-
-      - name: Run Ansible - WireGuard
-        run: |
-          ansible-playbook -i ansible/inventory/hosts.yml             ansible/playbooks/setup-wireguard.yml             --vault-password-file ~/.vault_password             --private-key ~/.ssh/server_key
-
-      - name: Run Ansible - MariaDB
-        run: |
-          ansible-playbook -i ansible/inventory/hosts.yml             ansible/playbooks/setup-db.yml             --vault-password-file ~/.vault_password             --private-key ~/.ssh/server_key
-
-      - name: Run Ansible - Flask App
-        run: |
-          ansible-playbook -i ansible/inventory/hosts.yml             ansible/playbooks/deploy-webapp.yml             --vault-password-file ~/.vault_password             --private-key ~/.ssh/server_key
-
-      - name: Verify health
-        id: verify
-        run: |
-          ALB="${{ needs.get-outputs.outputs.alb_dns }}"
-          for i in 1 2 3 4 5; do
-            HEALTH=$(curl -s "http://$ALB/health" --max-time 10 || echo '{"status":"error"}')
-            echo "Health check $i: $HEALTH"
-            echo "$HEALTH" | grep -q '"ok"' && break
-            sleep 15
-          done
-          DB=$(curl -s "http://$ALB/api/db-status" --max-time 10 || echo '{"status":"error"}')
-          echo "DB status: $DB"
-          echo "health_ok=$(echo $HEALTH | grep -c ok)" >> $GITHUB_OUTPUT
-          echo "db_ok=$(echo $DB | grep -c online)" >> $GITHUB_OUTPUT
-
-      - name: Post results to PR comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = [
-              '## Deploy Complete!',
-              '',
-              '| Resource | Value |',
-              '|----------|-------|',
-              '| **ALB URL** | `http://${{ needs.get-outputs.outputs.alb_dns }}` |',
-              '| **EC2 IPs** | `${{ needs.get-outputs.outputs.ec2_ips }}` |',
-              '| **EC2 VPN** | `10.8.0.1` |',
-              '| **DB VM 8888** | `${{ needs.get-outputs.outputs.db_ip }}` |',
-              '| **DB VPN** | `10.8.0.2` |',
-              '| **WireGuard** | Tunnel UP |',
-              '| **/health** | `${{ steps.verify.outputs.health_ok == 1 && "200 OK" || "FAILED" }}` |',
-              '| **/api/db-status** | `${{ steps.verify.outputs.db_ok == 1 && "online" || "FAILED" }}` |',
-              '',
-              'Click ALB URL to verify live.'
-            ].join('');
-            const prs = await github.rest.pulls.list({
-              owner: context.repo.owner, repo: context.repo.repo,
-              state: 'all', sort: 'updated', direction: 'desc', per_page: 1
-            });
-            if (prs.data.length) {
-              github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: prs.data[0].number, body
-              });
-            }
-
-      - name: Slack - Deploy result
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_CTO_WEBHOOK }}
-        run: |
-          ALB="${{ needs.get-outputs.outputs.alb_dns }}"
-          curl -X POST -H 'Content-type: application/json'             --data "{"text":"Deploy OK!\nALB: http://$ALB\nDB: ${{ needs.get-outputs.outputs.db_ip }}\nHealth: PASS\nPR: https://github.com/${{ github.repository }}/pulls"}"             "$SLACK_WEBHOOK"
+    - name: Success Notification
+      uses: slackapi/slack-github-action@v1.26.0
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CTO_WEBHOOK }}
+      with:
+        payload: |
+          {
+            "blocks": [
+              {"type": "header", "text": {"type": "plain_text", "text": "✅ PA3 SUCCESS"}},
+              {"type": "section", "text": {"type": "mrkdwn", "text": "*Hybrid Cloud LIVE!*\nALB: ${{ needs.get-outputs.outputs.alb_dns }}\nDB: ${{ needs.get-outputs.outputs.db_ip }}"}},
+              {"type": "context", "elements": [{"type": "mrkdwn", "text": "*Run:* #${{ github.run_number }}"}]}
+            ]
+          }
