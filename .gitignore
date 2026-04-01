@@ -6,26 +6,24 @@
 *.tfvars.json
 crash.log
 override.tf
-override.tf.json
+.terraform.lock.hcl
 
-# Ansible
-*.retry
+# Ansible vault
 ansible/group_vars/all/vault.yml
+*.retry
 
-# SSH Keys
+# SSH Keys (không bao giờ commit key)
 *.pem
 *.key
-id_rsa*
-id_ed25519*
+server_key*
+github_key*
 
-# OS
+# OS / IDE
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
 
-# Env
+# Env files
 .env
 *.env
