@@ -1,6 +1,7 @@
 terraform {
   cloud {
     organization = "hybrid-cloud-doanthesis"
+
     workspaces {
       name = "ws-aws-prod"
     }

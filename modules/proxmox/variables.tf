@@ -1,5 +1,5 @@
-variable "vm_id" {
-  description = "VM Clone ID (DB Server)"
+variable "vmid" {
+  description = "VM ID for DB Server"
   type        = number
   default     = 8888
 }
@@ -12,16 +12,19 @@ variable "template_id" {
 
 variable "vm_name" {
   description = "VM name"
+  type        = string
   default     = "db-server"
 }
 
 variable "vm_ip" {
   description = "VM static IP with CIDR"
+  type        = string
   default     = "172.199.10.180/24"
 }
 
 variable "gateway" {
   description = "Default gateway"
+  type        = string
   default     = "172.199.10.1"
 }
 
@@ -33,12 +36,14 @@ variable "memory" {
 
 variable "disk_size" {
   description = "Disk size"
+  type        = string
   default     = "30G"
 }
 
 variable "cores" {
-  type    = number
-  default = 2
+  description = "CPU cores"
+  type        = number
+  default     = 2
 }
 
 variable "ssh_public_key" {
