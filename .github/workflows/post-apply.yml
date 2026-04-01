@@ -12,10 +12,30 @@ jobs:
   wait-for-hcp:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for HCP Terraform Apply
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_wrapper: false
+
+      - name: Wait for HCP Apply to finish
+        working-directory: environments/aws-prod
         run: |
-          echo "Waiting 300s for HCP to finish apply..."
-          sleep 300
+          terraform init -input=false -no-color
+          echo "Polling HCP state (max 20 attempts x 30s = 10 min)..."
+          for i in $(seq 1 20); do
+            STATE=$(terraform output -raw alb_dns_name 2>/dev/null || echo "pending")
+            echo "Attempt $i/20: ALB=$STATE"
+            if [ "$STATE" != "pending" ] && [ -n "$STATE" ]; then
+              echo "HCP Apply complete! ALB=$STATE"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Timeout: HCP Apply not complete after 10 min"
+          exit 1
 
   get-outputs:
     needs: wait-for-hcp
@@ -134,3 +154,4 @@ jobs:
         with:
           payload: >-
             {"text":"PA3 FAILED! Run ${{ github.run_number }} - check Actions tab"}
+EOF
