@@ -1,0 +1,6 @@
+# CTO phải review mọi thay đổi Terraform và workflows
+*.tf                    @htv-org-devops/cto-approvers
+.github/workflows/*.yml @htv-org-devops/cto-approvers
+modules/                @htv-org-devops/cto-approvers
+environments/           @htv-org-devops/cto-approvers
+ansible/                @htv-org-devops/cto-approvers
