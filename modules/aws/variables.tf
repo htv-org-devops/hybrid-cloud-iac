@@ -17,16 +17,16 @@ variable "azs" {
 }
 
 variable "instance_type" {
-  type        = string
-  default     = "t3.micro"
+  type    = string
+  default = "t3.micro"
 }
 
 variable "key_name" {
-  type        = string
-  default     = "hybrid-cloud-key"
+  type    = string
+  default = "hybrid-cloud-key"
 }
 
 variable "environment" {
-  type        = string
-  default     = "production"
+  type    = string
+  default = "production"
 }

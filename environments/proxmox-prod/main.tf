@@ -1,7 +1,10 @@
-module "proxmox_db" {
-  source = "../../modules/proxmox"
+variable "pm_api_url"  { type = string }
+variable "pm_user"     { type = string }
+variable "pm_password" { type = string; sensitive = true }
 
-  vm_id          = 8888
+module "proxmox_db" {
+  source         = "../../modules/proxmox"
+  vmid           = 8888
   template_id    = 9999
   vm_name        = "db-server"
   vm_ip          = "172.199.10.180/24"
@@ -10,5 +13,4 @@ module "proxmox_db" {
   disk_size      = "30G"
   cores          = 2
   ssh_public_key = file("~/.ssh/server_key.pub")
-  # Hoặc dùng variable: var.ssh_public_key
 }

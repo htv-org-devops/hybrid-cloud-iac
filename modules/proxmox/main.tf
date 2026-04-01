@@ -7,26 +7,17 @@ terraform {
   }
 }
 
-provider "proxmox" {
-  pm_api_url      = var.pm_api_url
-  pm_user         = var.pm_user
-  pm_password     = var.pm_password
-  pm_tls_insecure = true
-}
-
 resource "proxmox_vm_qemu" "db_server" {
   name        = var.vm_name
   target_node = "pve"
   vmid        = var.vmid
-
-  clone = var.template_id
-  os_type  = "cloud-init"
-  cores    = var.cores
-  sockets  = 1
-  memory   = var.memory
-  agent    = 1
-
-  scsihw = "virtio-scsi-single"
+  clone       = var.template_id
+  os_type     = "cloud-init"
+  cores       = var.cores
+  sockets     = 1
+  memory      = var.memory
+  agent       = 1
+  scsihw      = "virtio-scsi-single"
 
   disk {
     slot     = 0
@@ -41,15 +32,12 @@ resource "proxmox_vm_qemu" "db_server" {
     bridge = "vmbr0"
   }
 
-  ipconfig0 = "ip=${var.vm_ip},gw=${var.gateway}"
-  ciuser    = "ubuntu"
-  sshkeys   = var.ssh_public_key
+  ipconfig0  = "ip=${var.vm_ip},gw=${var.gateway}"
+  ciuser     = "ubuntu"
+  sshkeys    = var.ssh_public_key
   nameserver = "8.8.8.8"
 
   lifecycle {
-    ignore_changes = [
-      network,
-      disk
-    ]
+    ignore_changes = [network, disk]
   }
 }
