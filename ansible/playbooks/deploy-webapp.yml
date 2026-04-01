@@ -1,0 +1,75 @@
+---
+- name: Deploy Flask webapp on EC2
+  hosts: web_servers
+  become: yes
+  tasks:
+    - name: Install Python packages
+      apt:
+        name: [python3, python3-pip]
+        state: present
+        update_cache: yes
+
+    - name: Create app directory
+      file:
+        path: /opt/webapp
+        state: directory
+        owner: ubuntu
+        mode: '0755'
+
+    - name: Copy app files
+      copy:
+        src: "../../webapp/{{ item }}"
+        dest: "/opt/webapp/{{ item }}"
+      loop:
+        - app.py
+        - requirements.txt
+
+    - name: Copy templates
+      copy:
+        src: "../../webapp/templates/"
+        dest: "/opt/webapp/templates/"
+
+    - name: Install Python dependencies
+      pip:
+        requirements: /opt/webapp/requirements.txt
+        executable: pip3
+
+    - name: Create systemd service
+      copy:
+        dest: /etc/systemd/system/webapp.service
+        content: |
+          [Unit]
+          Description=Flask Web Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/webapp
+          Environment="DB_HOST=10.8.0.2"
+          Environment="DB_PORT=3306"
+          Environment="DB_NAME=appdb"
+          Environment="DB_USER=appuser"
+          Environment="DB_PASS={{ vault_db_password }}"
+          ExecStart=/usr/bin/python3 /opt/webapp/app.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start webapp
+      systemd:
+        name: webapp
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
+
+    - name: Wait for Flask to start
+      uri:
+        url: "http://localhost:5000/health"
+        status_code: 200
+      register: health
+      retries: 5
+      delay: 3
+      until: health.status == 200

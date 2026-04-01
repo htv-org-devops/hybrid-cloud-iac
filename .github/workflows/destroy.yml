@@ -1,0 +1,36 @@
+name: "💥 Destroy Infrastructure"
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DESTROY to confirm'
+        required: true
+
+jobs:
+  destroy:
+    if: github.event.inputs.confirm == 'DESTROY'
+    runs-on: ubuntu-latest
+    environment: production-destroy   # ← CTO phải approve
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Destroy AWS
+        working-directory: environments/aws-prod
+        run: |
+          terraform init
+          terraform destroy -auto-approve
+
+      - name: Destroy Proxmox
+        working-directory: environments/proxmox-prod
+        run: |
+          terraform init
+          terraform destroy -auto-approve
+
+      - name: Notify Slack
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CTO_WEBHOOK }}
+        run: |
+          curl -X POST -H 'Content-type: application/json'             --data '{"text":"All infrastructure DESTROYED by ${{ github.actor }}"}'             "$SLACK_WEBHOOK"
