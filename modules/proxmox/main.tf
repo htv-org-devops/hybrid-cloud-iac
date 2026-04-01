@@ -2,52 +2,54 @@ terraform {
   required_providers {
     proxmox = {
       source  = "Telmate/proxmox"
-      version = "~> 3.0"
+      version = "~> 3.0.2"
     }
   }
 }
 
+provider "proxmox" {
+  pm_api_url      = var.pm_api_url
+  pm_user         = var.pm_user
+  pm_password     = var.pm_password
+  pm_tls_insecure = true
+}
+
 resource "proxmox_vm_qemu" "db_server" {
   name        = var.vm_name
-  target_node = "pve"   # Tên node Proxmox (xem trên Proxmox UI)
-  vmid        = var.vm_id
+  target_node = "pve"
+  vmid        = var.vmid
 
-  # Clone từ template
-  clone   = "ubuntu2404-template"   # Tên template VM 9999
-  os_type = "cloud-init"
+  clone = var.template_id
+  os_type  = "cloud-init"
+  cores    = var.cores
+  sockets  = 1
+  memory   = var.memory
+  agent    = 1
 
-  # Hardware
-  cores   = var.cores
-  memory  = var.memory
-  scsihw  = "virtio-scsi-single"
-  agent   = 1
+  scsihw = "virtio-scsi-single"
 
-  # Disk
-  disks {
-    scsi {
-      scsi0 {
-        disk {
-          storage = "local-lvm"
-          size    = var.disk_size
-        }
-      }
-    }
+  disk {
+    slot     = 0
+    type     = "scsi"
+    storage  = "local-lvm"
+    size     = var.disk_size
+    iothread = 1
   }
 
-  # Network
   network {
     model  = "virtio"
     bridge = "vmbr0"
   }
 
-  # Cloud-Init
-  ipconfig0  = "ip=${var.vm_ip},gw=${var.gateway}"
-  ciuser     = "ubuntu"
-  sshkeys    = var.ssh_public_key
+  ipconfig0 = "ip=${var.vm_ip},gw=${var.gateway}"
+  ciuser    = "ubuntu"
+  sshkeys   = var.ssh_public_key
   nameserver = "8.8.8.8"
 
-  # Đợi cloud-init hoàn tất
   lifecycle {
-    ignore_changes = [network, disks]
+    ignore_changes = [
+      network,
+      disk
+    ]
   }
 }
