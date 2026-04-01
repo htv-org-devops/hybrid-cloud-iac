@@ -154,4 +154,3 @@ jobs:
         with:
           payload: >-
             {"text":"PA3 FAILED! Run ${{ github.run_number }} - check Actions tab"}
-EOF
