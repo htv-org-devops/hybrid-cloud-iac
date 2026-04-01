@@ -208,8 +208,7 @@ jobs:
               '| **/api/db-status** | `${{ steps.verify.outputs.db_ok == 1 && "online" || "FAILED" }}` |',
               '',
               'Click ALB URL to verify live.'
-            ].join('
-');
+            ].join('');
             const prs = await github.rest.pulls.list({
               owner: context.repo.owner, repo: context.repo.repo,
               state: 'all', sort: 'updated', direction: 'desc', per_page: 1
