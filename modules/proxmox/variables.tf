@@ -1,26 +1,44 @@
-variable "vmid" {
-  type    = number
-  default = 8888
+variable "pm_api_url" {
+  type = string
 }
 
-variable "template_id" {
-  type    = number
-  default = 9999
+variable "pm_user" {
+  type = string
+}
+
+variable "pm_password" {
+  type      = string
+  sensitive = true
 }
 
 variable "vm_name" {
+  type = string
+}
+
+variable "vmid" {
+  type = number
+}
+
+variable "template_id" {
+  type = number
+}
+
+variable "target_node" {
   type    = string
-  default = "db-server"
+  default = "pve"   # Tên node Proxmox mặc định
 }
 
 variable "vm_ip" {
-  type    = string
-  default = "172.199.10.180/24"
+  type = string
 }
 
 variable "gateway" {
-  type    = string
-  default = "172.199.10.1"
+  type = string
+}
+
+variable "cores" {
+  type    = number
+  default = 2
 }
 
 variable "memory" {
@@ -30,12 +48,7 @@ variable "memory" {
 
 variable "disk_size" {
   type    = string
-  default = "30G"
-}
-
-variable "cores" {
-  type    = number
-  default = 2
+  default = "20G"
 }
 
 variable "ssh_public_key" {
