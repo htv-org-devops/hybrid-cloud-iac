@@ -1,12 +1,3 @@
-terraform {
-  required_providers {
-    proxmox = {
-      source  = "Telmate/proxmox"
-      version = "~> 2.9.16"
-    }
-  }
-}
-
 resource "proxmox_vm_qemu" "db_server" {
   name        = var.vm_name
   target_node = "pve"
