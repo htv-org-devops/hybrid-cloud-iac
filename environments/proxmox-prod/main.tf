@@ -1,25 +1,17 @@
-variable "pm_api_url" {
-  type = string
-}
-
-variable "pm_user" {
-  type = string
-}
-
-variable "pm_password" {
-  type      = string
-  sensitive = true
-}
-
 module "proxmox_db" {
-  source         = "../../modules/proxmox"
-  vmid           = 8888
-  template_id    = 9999
+  source = "../../modules/proxmox"
+
+  pm_api_url     = var.pm_api_url
+  pm_user        = var.pm_user
+  pm_password    = var.pm_password
   vm_name        = "db-server"
-  vm_ip          = "172.199.10.180/24"
+  vmid           = 200
+  template_id    = 8888
+  target_node    = "pve"
+  vm_ip          = "172.199.10.180"
   gateway        = "172.199.10.1"
-  memory         = 4096
-  disk_size      = "30G"
   cores          = 2
+  memory         = 4096
+  disk_size      = "20G"
   ssh_public_key = var.ssh_public_key
 }
