@@ -2,7 +2,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "Telmate/proxmox"
-      version = "= 3.0.1-rc10"
+      version = "~> 2.9.16"
     }
   }
 }
@@ -38,6 +38,9 @@ resource "proxmox_vm_qemu" "db_server" {
   nameserver = "8.8.8.8"
 
   lifecycle {
-    ignore_changes = [network, disk]
+    ignore_changes = [
+      network,
+      disk
+    ]
   }
 }
