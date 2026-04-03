@@ -1,6 +1,15 @@
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "Telmate/proxmox"
+      version = "3.0.1-rc4"
+    }
+  }
+}
+
 resource "proxmox_vm_qemu" "db_server" {
   name        = var.vm_name
-  target_node = "pve"
+  target_node = var.target_node
   vmid        = var.vmid
   clone       = var.template_id
   os_type     = "cloud-init"
@@ -23,15 +32,8 @@ resource "proxmox_vm_qemu" "db_server" {
     bridge = "vmbr0"
   }
 
-  ipconfig0  = "ip=${var.vm_ip},gw=${var.gateway}"
+  ipconfig0  = "ip=${var.vm_ip}/24,gw=${var.gateway}"
   ciuser     = "ubuntu"
   sshkeys    = var.ssh_public_key
   nameserver = "8.8.8.8"
-
-  lifecycle {
-    ignore_changes = [
-      network,
-      disk
-    ]
-  }
 }
