@@ -1,6 +1,6 @@
 terraform {
   cloud {
-    organization = "hybird-cloud-doanthesis"  # Thay bằng org thật của bạn
+    organization = "hybrid-cloud-doanthesis"  # Thay bằng org thật của bạn
     workspaces {
       name = "ws-proxmox-prod"
     }
