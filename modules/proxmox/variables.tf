@@ -1,7 +1,3 @@
-variable "pm_api_url" {
-  type = string
-}
-
 variable "pm_user" {
   type = string
 }
@@ -31,11 +27,6 @@ variable "target_node" {
 variable "vm_ip" {
   type = string
 }
-
-variable "gateway" {
-  type = string
-}
-
 variable "cores" {
   type    = number
   default = 2
@@ -49,8 +40,4 @@ variable "memory" {
 variable "disk_size" {
   type    = string
   default = "20G"
-}
-
-variable "ssh_public_key" {
-  type = string
 }
