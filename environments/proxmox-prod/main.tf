@@ -21,5 +21,5 @@ module "proxmox_db" {
   memory         = 4096
   disk_size      = "30G"
   cores          = 2
-  ssh_public_key = file("~/.ssh/server_key.pub")
+  ssh_public_key = var.ssh_public_key
 }
